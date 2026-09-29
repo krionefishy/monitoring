@@ -629,7 +629,7 @@ export default function App() {
                   <label>
                     Сервис
                     <select
-                      value={service}
+                      value={detail && incident ? incident.service : service}
                       disabled={!!detail}
                       onChange={(e) => filter("service", e.target.value)}
                     >
@@ -644,7 +644,7 @@ export default function App() {
                   <label>
                     Группа ручек
                     <select
-                      value={group}
+                      value={detail && incident ? incident.route_group : group}
                       disabled={!!detail}
                       onChange={(e) => filter("group", e.target.value)}
                     >

@@ -7,7 +7,7 @@ from app.v2.api import create_app
 from app.v2.auth import passwords
 from app.v2.ingest import ingest
 from app.v2.projection import publish
-from app.v2.storage import incident_states, incidents, metrics, outbox, users
+from app.v2.storage import incident_states, incidents, metrics, outbox, receipts, users
 from app.v2.telemetry import Batch, aggregate, parse_record
 from fastapi.testclient import TestClient
 from redis import Redis
@@ -245,3 +245,85 @@ def test_collector_to_database_and_route_cardinality_limit(store, tmp_path):
         assert any(
             r["route"] == "/[cardinality-limit]" and r["payload"]["count"] == 10 for r in rows
         )
+
+
+def test_rebuild_read_database_preserves_pending_and_latest_totals(store):
+    from app.v2.projection import rebuild
+
+    ingest(store, make_batch(store, (200, 404)))
+    publish(store)
+    ingest(store, make_batch(store, (200, 404, 409)))
+    with store.read.begin() as conn:
+        conn.execute(metrics.delete())
+        conn.execute(incidents.delete())
+        conn.execute(receipts.delete())
+    rebuild(store)
+    publish(store)
+    with store.read.connect() as conn:
+        assert sum(p["count"] for p in conn.execute(select(metrics.c.payload)).scalars()) == 5
+
+
+def test_second_installation_rejects_first_installation_credentials_and_cookie(store):
+    from app.v2.config import Settings
+    from app.v2.migrate import migrate
+    from app.v2.storage import Store
+    from sqlalchemy import create_engine, text
+
+    first_settings = store.settings
+    second_urls = []
+    for url in (first_settings.database_url, first_settings.read_database_url):
+        engine = create_engine(url, isolation_level="AUTOCOMMIT")
+        with engine.connect() as conn:
+            conn.execute(text("DROP DATABASE IF EXISTS monitoring_v2_test_b WITH (FORCE)"))
+            conn.execute(text("CREATE DATABASE monitoring_v2_test_b"))
+        engine.dispose()
+        second_urls.append(url.replace("/monitoring_v2_test", "/monitoring_v2_test_b"))
+    second_settings = first_settings.model_copy(
+        update={
+            "instance_id": "second-instance",
+            "secret_key": Settings.model_fields["secret_key"].annotation("b" * 48),
+            "database_url": second_urls[0],
+            "read_database_url": second_urls[1],
+        }
+    )
+    second = Store(second_settings)
+    migrate(second)
+    Redis.from_url(first_settings.redis_url).flushdb()
+    with store.primary.begin() as conn:
+        conn.execute(
+            users.insert().values(
+                id="a-user",
+                username="local-admin",
+                password_hash=passwords.hash("first-instance-password"),
+                role="admin",
+                enabled=True,
+            )
+        )
+    try:
+        with (
+            TestClient(create_app(first_settings)) as first,
+            TestClient(create_app(second_settings)) as other,
+        ):
+            assert (
+                first.post(
+                    "/api/auth/login",
+                    json={"username": "local-admin", "password": "first-instance-password"},
+                ).status_code
+                == 200
+            )
+            other.cookies.update(first.cookies)
+            assert other.get("/api/auth/me").status_code == 401
+            assert (
+                other.post(
+                    "/api/auth/login",
+                    json={"username": "local-admin", "password": "first-instance-password"},
+                ).status_code
+                == 401
+            )
+    finally:
+        second.close()
+        for url in (first_settings.database_url, first_settings.read_database_url):
+            engine = create_engine(url, isolation_level="AUTOCOMMIT")
+            with engine.connect() as conn:
+                conn.execute(text("DROP DATABASE monitoring_v2_test_b WITH (FORCE)"))
+            engine.dispose()

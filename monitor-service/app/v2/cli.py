@@ -15,6 +15,7 @@ def main():
     parser = argparse.ArgumentParser(prog="monitor")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("init")
+    commands.add_parser("rebuild-read")
     commands.add_parser("secret")
     for name in ("create-user", "set-password", "disable-user", "enable-user"):
         user = commands.add_parser(name)
@@ -34,6 +35,13 @@ def main():
         return
     store = Store(Settings())
     try:
+        if args.command == "rebuild-read":
+            from .projection import rebuild
+
+            migrate(store)
+            rebuild(store)
+            print("Read database rebuilt from primary aggregates.")
+            return
         if args.command == "init":
             migrate(store)
             print("Monitoring v2 databases initialized. No users have been created automatically.")

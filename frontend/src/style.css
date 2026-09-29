@@ -622,3 +622,33 @@ tr:last-child td {
     font-size: 22px;
   }
 }
+.service-card {
+  min-width: 0;
+}
+.timeline {
+  min-width: 0;
+  overflow: hidden;
+}
+.timeline span {
+  min-width: 0;
+  flex: 1 1 0;
+}
+.service-row {
+  min-width: 0;
+}
+.service-row h2 {
+  overflow-wrap: anywhere;
+}
+.detail-grid > * {
+  min-width: 0;
+}
+.panel-heading h2 {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.header-user > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+}

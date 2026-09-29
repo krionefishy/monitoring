@@ -84,3 +84,32 @@ def publish(store: Store, limit: int = 100) -> int:
         source.execute(health_history.delete().where(health_history.c.checked_at < cutoff))
         source.execute(sessions.delete().where(sessions.c.expires < time.time()))
     return len(pending)
+
+
+def rebuild(store: Store):
+    """Recover a lost read database from primary aggregates, including pending publications."""
+    with store.writer() as source:
+        pending_ids = list(source.execute(select(outbox.c.id)).scalars())
+        with store.read.begin() as target:
+            target.execute(text("SELECT pg_advisory_xact_lock(7262402)"))
+            store.validate_read_instance(target)
+            newest = 0
+            for table in (metrics, incidents):
+                target.execute(table.delete())
+                result = source.execute(select(table).execution_options(yield_per=1000)).mappings()
+                for partition in result.partitions(1000):
+                    records = [dict(row) for row in partition]
+                    target.execute(table.insert(), records)
+                    newest = max(newest, max(row["payload"]["last_seen"] for row in records))
+            for batch_id in pending_ids:
+                target.execute(
+                    insert(receipts)
+                    .values(id=batch_id, created=time.time())
+                    .on_conflict_do_nothing()
+                )
+            target.execute(
+                publication.update()
+                .where(publication.c.id == 1)
+                .values(generation=str(uuid.uuid4()), published_at=time.time(), newest_event=newest)
+            )
+        source.execute(outbox.delete().where(outbox.c.id.in_(pending_ids)))
