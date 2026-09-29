@@ -28,6 +28,7 @@ def run(role: str):
         if role == "collector"
         else None
     )
+    publisher = None
     try:
         if collector:
             while not stop.is_set():
@@ -47,27 +48,35 @@ def run(role: str):
                 if not owner.execute(text("SELECT pg_try_advisory_lock(7262403)")).scalar():
                     raise RuntimeError("Another scheduler is already active")
                 owner.commit()
-                next_publish = 0
-                while not stop.is_set():
-                    started = time.monotonic()
-                    owner.execute(
-                        text("SELECT 1")
-                    )  # A lost ownership connection stops this worker.
-                    owner.commit()
-                    check_services(store)
-                    store.heartbeat("health", {"state": "running"})
-                    if started >= next_publish:
+
+                def publish_loop():
+                    while not stop.is_set():
+                        delay = settings.publish_seconds
                         try:
-                            # Drain pending batches; each publication remains an atomic read snapshot.
                             while publish(store) == 100 and not stop.is_set():
                                 pass
                             store.heartbeat("publisher", {"state": "running"})
-                            next_publish = started + settings.publish_seconds
                         except Exception:
                             log.exception("Publication unavailable; primary outbox retained")
-                            next_publish = started + 30
+                            delay = 30
+                        stop.wait(delay)
+
+                publisher = threading.Thread(
+                    target=publish_loop, name="read-publisher", daemon=True
+                )
+                publisher.start()
+                while not stop.is_set():
+                    started = time.monotonic()
+                    # Loss of the session holding the singleton lock stops both schedules.
+                    owner.execute(text("SELECT 1"))
+                    owner.commit()
+                    check_services(store)
+                    store.heartbeat("health", {"state": "running"})
                     stop.wait(max(0, 30 - (time.monotonic() - started)))
     finally:
+        stop.set()
+        if publisher:
+            publisher.join(timeout=10)
         if collector:
             collector.close()
         store.close()

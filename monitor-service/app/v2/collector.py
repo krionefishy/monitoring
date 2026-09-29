@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 
 from .config import AppConfig
-from .telemetry import Batch, aggregate, parse_record
+from .telemetry import Batch, ExcludedRecord, aggregate, parse_record
 
 
 class Collector:
@@ -114,7 +114,7 @@ class Collector:
                             if record["time"] > time.time() + 300:
                                 raise ValueError("future timestamp")
                             records.append(record)
-                        except LookupError:
+                        except ExcludedRecord:
                             skipped += 1
                         except (
                             ValueError,

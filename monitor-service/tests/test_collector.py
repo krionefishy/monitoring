@@ -107,3 +107,21 @@ def test_exclusive_reader_and_malformed_line(tmp_path):
     assert info["invalid_lines"] == 1
     assert info["requests"] == 1
     collector.close()
+
+
+def test_missing_required_field_is_malformed_not_excluded(tmp_path):
+    path = tmp_path / "access.json"
+    missing = json.loads(line())
+    del missing["status"]
+    path.write_bytes(json.dumps(missing).encode() + b"\n" + line(path="/health"))
+    config = AppConfig(
+        application="test",
+        environment="test",
+        log_path=str(path),
+        rotated_glob=str(path) + ".[0-9]",
+    )
+    collector = Collector(config, tmp_path / "spool")
+    info = collector.scan()
+    assert info["invalid_lines"] == 1
+    assert info["excluded_lines"] == 1
+    collector.close()

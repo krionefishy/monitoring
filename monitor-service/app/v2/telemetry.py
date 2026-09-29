@@ -31,6 +31,10 @@ LATENCY_BOUNDS = [
 ]
 
 
+class ExcludedRecord(LookupError):
+    """A valid record intentionally outside the configured collection scope."""
+
+
 class Aggregate(BaseModel):
     bucket: int
     service: str
@@ -68,7 +72,7 @@ def route_info(path: str, config: AppConfig) -> tuple[str, str, str]:
     path = path.split("?", 1)[0]
     base = config.base_path
     if base and not (path == base or path.startswith(base + "/")):
-        raise LookupError("outside base path")
+        raise ExcludedRecord("outside base path")
     path = path[len(base) :] or "/"
     group = path.strip("/").split("/")[0] or "root"
     service = next(
@@ -98,7 +102,7 @@ def parse_record(raw: bytes, config: AppConfig) -> dict:
     if not isinstance(path, str) or not path.startswith("/") or len(path) > 4096:
         raise ValueError("invalid path")
     if path.split("?", 1)[0] in config.exclude_paths:
-        raise LookupError("excluded")
+        raise ExcludedRecord("excluded")
     timestamp = float(obj["msec"])
     status = int(obj["status"])
     method = obj["method"]

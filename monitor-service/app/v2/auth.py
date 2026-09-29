@@ -87,7 +87,11 @@ def login(request: Request, username: str, password: str):
         raise HTTPException(503, "Вход временно недоступен") from None
     store = request.app.state.store
     with store.primary.begin() as conn:
-        user = conn.execute(select(users).where(users.c.username == username)).mappings().first()
+        user = (
+            conn.execute(select(users).where(users.c.username == username).with_for_update())
+            .mappings()
+            .first()
+        )
         try:
             valid = passwords.verify(user["password_hash"] if user else DUMMY_HASH, password)
         except (VerificationError, InvalidHashError):
