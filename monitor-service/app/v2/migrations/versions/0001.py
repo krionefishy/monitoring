@@ -1,13 +1,15 @@
 """Independent PostgreSQL v2 schema. Never opens or changes the v1 SQLite file."""
+
 from alembic import op
-revision = 'v2_0001'
+
+revision = "v2_0001"
 down_revision = None
 branch_labels = None
 depends_on = None
 
 
 def upgrade():
-    op.execute('''
+    op.execute("""
     CREATE TABLE instances (id varchar PRIMARY KEY, secret_fingerprint varchar NOT NULL);
     CREATE TABLE users (id varchar PRIMARY KEY, username varchar UNIQUE NOT NULL, password_hash text NOT NULL, role varchar NOT NULL, enabled boolean NOT NULL);
     CREATE TABLE sessions (token_hash varchar PRIMARY KEY, user_id varchar NOT NULL REFERENCES users(id), instance_id varchar NOT NULL, csrf varchar NOT NULL, expires double precision NOT NULL);
@@ -25,8 +27,10 @@ def upgrade():
     CREATE TABLE health_history (id varchar PRIMARY KEY, service varchar NOT NULL, checked_at double precision NOT NULL, state varchar NOT NULL, latency_ms double precision);
     CREATE INDEX health_history_time ON health_history(service, checked_at);
     CREATE TABLE workers (id varchar PRIMARY KEY, updated double precision NOT NULL, payload jsonb NOT NULL);
-    ''')
+    """)
 
 
 def downgrade():
-    raise RuntimeError('Restore a PostgreSQL backup to downgrade; telemetry is not discarded automatically')
+    raise RuntimeError(
+        "Restore a PostgreSQL backup to downgrade; telemetry is not discarded automatically"
+    )

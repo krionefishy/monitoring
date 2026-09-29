@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Activity,
   BarChart3,
@@ -428,13 +428,18 @@ export default function App() {
     const timer = setInterval(() => setRevision((v) => v + 1), 30000);
     return () => clearInterval(timer);
   }, [auto]);
+  const lastQuery = useRef("");
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
     setBusy(true);
     setError("");
-    setData(null);
-    setIncident(null);
+    const currentQuery = `${page}:${detail || ""}:${query}:${state}:${offset}`;
+    if (lastQuery.current !== currentQuery) {
+      setData(null);
+      setIncident(null);
+      lastQuery.current = currentQuery;
+    }
     const run = async () => {
       if (page === "dashboards") {
         const v = await api<Metrics>(`/api/metrics?${query}`);

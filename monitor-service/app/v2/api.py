@@ -145,6 +145,7 @@ def create_app(settings: Settings | None = None):
     @app.get("/api/config")
     def public_config(user=Depends(current_user)):
         with store.read.connect() as conn:
+            store.validate_read_instance(conn)
             groups = list(
                 conn.execute(
                     select(metrics.c.route_group).distinct().order_by(metrics.c.route_group)
@@ -182,9 +183,13 @@ def create_app(settings: Settings | None = None):
             store.read.connect().execution_options(isolation_level="REPEATABLE READ") as conn,
             conn.begin(),
         ):
+            store.validate_read_instance(conn)
             snapshot = (
                 conn.execute(select(publication).where(publication.c.id == 1)).mappings().one()
             )
+            # Do not plot unpublished minutes as zero traffic.
+            end = min(end, int(snapshot["published_at"] or time.time()) // 60 * 60)
+            start = end - hours * 3600
             params = [hours, start, end, step, service, group, route, method]
             digest = hashlib.sha256(json.dumps(params).encode()).hexdigest()
             cache_key = f"metrics:{settings.instance_id}:{snapshot['generation']}:{digest}"
@@ -219,6 +224,7 @@ def create_app(settings: Settings | None = None):
         user=Depends(current_user),
     ):
         with store.read.connect() as conn:
+            store.validate_read_instance(conn)
             # Read-model counts, current primary states: acknowledge/resolve has immediate feedback.
             rows = (
                 conn.execute(
@@ -245,6 +251,7 @@ def create_app(settings: Settings | None = None):
     @app.get("/api/incidents/{incident_id}")
     def incident_detail(incident_id: str, user=Depends(current_user)):
         with store.read.connect() as conn:
+            store.validate_read_instance(conn)
             row = (
                 conn.execute(select(incidents).where(incidents.c.id == incident_id))
                 .mappings()

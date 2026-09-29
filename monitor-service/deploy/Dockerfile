@@ -7,8 +7,8 @@ RUN npm run build
 
 FROM python:3.13-slim
 WORKDIR /app
-COPY monitor-service/requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY monitor-service/requirements.lock ./
+RUN pip install --no-cache-dir -r requirements.lock
 COPY monitor-service/app/v2 /app/app/v2
 COPY monitor-service/app/__init__.py /app/app/__init__.py
 COPY monitor-service/main.py /app/main.py

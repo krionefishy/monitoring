@@ -66,7 +66,9 @@ def admin_user(request: Request):
 
 def login(request: Request, username: str, password: str):
     origin = request.headers.get("origin")
-    if origin and origin.rstrip("/") != str(request.base_url).rstrip("/"):
+    if origin and origin.rstrip("/") != (
+        request.app.state.settings.public_origin or str(request.base_url)
+    ).rstrip("/"):
         raise HTTPException(403, "Недопустимый источник запроса")
     client = request.client.host if request.client else "unknown"
     # HMAC prevents raw usernames/IP addresses from being stored in Redis keys.

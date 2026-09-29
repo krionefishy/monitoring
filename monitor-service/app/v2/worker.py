@@ -46,12 +46,14 @@ def run(role: str):
             with store.primary.connect() as owner:
                 if not owner.execute(text("SELECT pg_try_advisory_lock(7262403)")).scalar():
                     raise RuntimeError("Another scheduler is already active")
+                owner.commit()
                 next_publish = 0
                 while not stop.is_set():
                     started = time.monotonic()
                     owner.execute(
                         text("SELECT 1")
                     )  # A lost ownership connection stops this worker.
+                    owner.commit()
                     check_services(store)
                     store.heartbeat("health", {"state": "running"})
                     if started >= next_publish:
