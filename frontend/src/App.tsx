@@ -44,18 +44,12 @@ const date = (n: number | null | undefined) =>
     : "—";
 const ms = (n: number | null) => (n === null ? "—" : `${fmt(n)} мс`);
 const labels: Record<string, string> = {
-  open: "Открыт",
-  acknowledged: "В работе",
-  resolved: "Решён",
   healthy: "Healthy",
   degraded: "Degraded",
   down: "Down",
   unknown: "Unknown",
 };
 const tones: Record<string, string> = {
-  open: "red",
-  acknowledged: "amber",
-  resolved: "green",
   healthy: "green",
   degraded: "amber",
   down: "red",
@@ -386,13 +380,12 @@ export default function App() {
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [revision, setRevision] = useState(0),
-    [auto, setAuto] = useState(true);
+    [loading, setLoading] = useState(true);
   const hours = params.get("hours") || "24",
     service = params.get("service") || "",
     group = params.get("group") || "",
     route = params.get("route") || "",
     method = params.get("method") || "",
-    state = params.get("state") || "",
     offset = Number(params.get("offset") || 0),
     query = new URLSearchParams({
       hours,
@@ -403,6 +396,7 @@ export default function App() {
     }).toString();
   const filter = (key: string, value: string) => {
     const next = new URLSearchParams(params);
+    next.delete("state");
     if (key !== "offset") next.delete("offset");
     if (value) next.set(key, value);
     else next.delete(key);
@@ -424,18 +418,19 @@ export default function App() {
         .catch((e) => setError(e.message));
   }, [user, revision]);
   useEffect(() => {
-    if (!auto) return;
+    if (!user) return;
     const timer = setInterval(() => setRevision((v) => v + 1), 30000);
     return () => clearInterval(timer);
-  }, [auto]);
+  }, [user]);
   const lastQuery = useRef("");
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
     setBusy(true);
     setError("");
-    const currentQuery = `${page}:${detail || ""}:${query}:${state}:${offset}`;
+    const currentQuery = `${page}:${detail || ""}:${query}:${offset}`;
     if (lastQuery.current !== currentQuery) {
+      setLoading(true);
       setData(null);
       setIncident(null);
       lastQuery.current = currentQuery;
@@ -457,7 +452,7 @@ export default function App() {
           }
         } else {
           const v = await api<{ items: Incident[]; total: number }>(
-            `/api/incidents?${query}&state=${encodeURIComponent(state)}&offset=${offset}`,
+            `/api/incidents?${query}&offset=${offset}`,
           );
           if (!cancelled) {
             setIncidents(v.items);
@@ -483,34 +478,19 @@ export default function App() {
         }
       })
       .finally(() => {
-        if (!cancelled) setBusy(false);
+        if (!cancelled) {
+          setBusy(false);
+          setLoading(false);
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [user, page, detail, query, state, offset, revision, hours]);
+  }, [user, page, detail, query, offset, revision, hours]);
   const openRoute = (r: { service: string; route: string; method: string }) =>
     navigate(
       `/dashboards?${new URLSearchParams({ hours, service: r.service, route: r.route, method: r.method })}`,
     );
-  const changeState = async (next: string) => {
-    if (!incident || !user) return;
-    setBusy(true);
-    try {
-      await api(`/api/incidents/${incident.id}`, {
-        method: "PATCH",
-        headers: { "X-CSRF-Token": user.csrf },
-        body: JSON.stringify({
-          state: next,
-          version: incident.lifecycle.version,
-        }),
-      });
-      setRevision((r) => r + 1);
-    } catch (e) {
-      setError((e as Error).message);
-      setBusy(false);
-    }
-  };
   if (user === undefined)
     return <div className="loading">Подключение к мониторингу…</div>;
   if (!user)
@@ -622,93 +602,62 @@ export default function App() {
               </button>
             </div>
           )}
-          {page !== "db_monitoring" && (
+          {(page === "dashboards" || page === "incidents") && (
             <div className="toolbar">
-              {page !== "services_status" && (
-                <>
-                  <label>
-                    Сервис
-                    <select
-                      value={detail && incident ? incident.service : service}
-                      disabled={!!detail}
-                      onChange={(e) => filter("service", e.target.value)}
-                    >
-                      <option value="">Все сервисы</option>
-                      {config?.services.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Группа ручек
-                    <select
-                      value={detail && incident ? incident.route_group : group}
-                      disabled={!!detail}
-                      onChange={(e) => filter("group", e.target.value)}
-                    >
-                      <option value="">all_groups</option>
-                      {config?.groups.map((g) => (
-                        <option key={g} value={g}>
-                          per_route_group · {g}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {(page === "dashboards" || detail) && (
-                    <label>
-                      Период
-                      <select
-                        value={hours}
-                        onChange={(e) => filter("hours", e.target.value)}
-                      >
-                        {[
-                          [1, "Последний час"],
-                          [6, "6 часов"],
-                          [24, "24 часа"],
-                          [168, "7 дней"],
-                          [720, "30 дней"],
-                        ].map(([v, t]) => (
-                          <option key={v} value={v}>
-                            {t}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-                  {page === "incidents" && !detail && (
-                    <label>
-                      Статус
-                      <select
-                        value={state}
-                        onChange={(e) => filter("state", e.target.value)}
-                      >
-                        <option value="">Все статусы</option>
-                        {["open", "acknowledged", "resolved"].map((s) => (
-                          <option key={s} value={s}>
-                            {labels[s]}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-                </>
-              )}
-              <span className="spacer" />
               <label>
-                Автообновление
+                Сервис
                 <select
-                  value={auto ? "on" : "off"}
-                  onChange={(e) => setAuto(e.target.value === "on")}
+                  value={detail && incident ? incident.service : service}
+                  disabled={!!detail}
+                  onChange={(e) => filter("service", e.target.value)}
                 >
-                  <option value="on">Каждые 30 секунд</option>
-                  <option value="off">Выключено</option>
+                  <option value="">Все сервисы</option>
+                  {config?.services.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
                 </select>
               </label>
+              <label>
+                Группа ручек
+                <select
+                  value={detail && incident ? incident.route_group : group}
+                  disabled={!!detail}
+                  onChange={(e) => filter("group", e.target.value)}
+                >
+                  <option value="">all_groups</option>
+                  {config?.groups.map((g) => (
+                    <option key={g} value={g}>
+                      per_route_group · {g}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {(page === "dashboards" || detail) && (
+                <label>
+                  Период
+                  <select
+                    value={hours}
+                    onChange={(e) => filter("hours", e.target.value)}
+                  >
+                    {[
+                      [1, "Последний час"],
+                      [6, "6 часов"],
+                      [24, "24 часа"],
+                      [168, "7 дней"],
+                      [720, "30 дней"],
+                    ].map(([v, t]) => (
+                      <option key={v} value={v}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
             </div>
           )}
-          {busy && !data && (
+          {loading && !data && page !== "db_monitoring" && (
             <div className="loading" role="status">
               Загрузка данных…
             </div>
@@ -864,7 +813,7 @@ export default function App() {
               </div>
             </>
           )}
-          {page === "incidents" && !detail && !busy && (
+          {page === "incidents" && !detail && !loading && (
             <section className="panel">
               <div className="panel-heading">
                 <h2>
@@ -886,7 +835,6 @@ export default function App() {
                           <th>Ручка</th>
                           <th>Код</th>
                           <th>События</th>
-                          <th>Статус</th>
                           <th>Последнее событие</th>
                         </tr>
                       </thead>
@@ -916,9 +864,6 @@ export default function App() {
                               <Code code={i.status} />
                             </td>
                             <td>{fmt(i.payload.count)}</td>
-                            <td>
-                              <Badge state={i.lifecycle.state} />
-                            </td>
                             <td className="muted">
                               {date(i.payload.last_seen)}
                             </td>
@@ -959,7 +904,6 @@ export default function App() {
                 <button onClick={() => navigate("/incidents")}>
                   <ArrowLeft size={14} /> К инцидентам
                 </button>
-                <Badge state={incident.lifecycle.state} />
               </div>
               <div className="detail-grid">
                 <section className="panel">
@@ -991,7 +935,6 @@ export default function App() {
                       ["Последнее", date(incident.payload.last_seen)],
                       ["Сервис", incident.service],
                       ["Группа", incident.route_group],
-                      ["Статус изменил", incident.lifecycle.updated_by],
                     ].map(([l, v]) => (
                       <div key={l}>
                         <span className="muted">{l}</span>
@@ -999,33 +942,6 @@ export default function App() {
                       </div>
                     ))}
                   </div>
-                  {user.role === "admin" && (
-                    <div style={{ display: "grid", gap: 9, marginTop: 28 }}>
-                      {["open", "acknowledged", "resolved"]
-                        .filter((s) => s !== incident.lifecycle.state)
-                        .map((s) => (
-                          <button
-                            key={s}
-                            disabled={busy}
-                            className={s === "resolved" ? "primary" : ""}
-                            onClick={() => changeState(s)}
-                          >
-                            {s === "resolved"
-                              ? "Решить"
-                              : s === "acknowledged"
-                                ? "Взять в работу"
-                                : "Открыть заново"}
-                          </button>
-                        ))}
-                    </div>
-                  )}
-                  <p
-                    className="small muted"
-                    style={{ marginTop: 18, lineHeight: 1.7 }}
-                  >
-                    Новая ошибка после текущего 30-секундного интервала снова
-                    откроет решённый инцидент.
-                  </p>
                   <button
                     style={{ marginTop: 18 }}
                     onClick={() => openRoute(incident)}
@@ -1068,7 +984,7 @@ export default function App() {
               </section>
             </>
           )}
-          {page === "services_status" && !busy && (
+          {page === "services_status" && !loading && (
             <>
               <Diagnostics workers={workers} />
               <div className="panel-heading">

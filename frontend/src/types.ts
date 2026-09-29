@@ -57,7 +57,6 @@ export type Incident = {
     last_seen: number;
     samples: { time: number; request_id: string }[];
   };
-  lifecycle: { state: string; version: number; updated_by: string };
 };
 export type ServiceStatus = {
   id: string;
