@@ -59,8 +59,8 @@ def route_info(path: str, config: AppConfig) -> tuple[str, str, str]:
     for rule in config.route_rules:
         if re.fullmatch(rule.pattern, path):
             return service, group, rule.route
-    # Never guess resource IDs; unmatched requests share one bounded route per group.
-    return service, group, path if path == '/' else f'/{group}/[unmatched]'
+    # Explicit rules normalize IDs; never guess which path segments are resource identifiers.
+    return service, group, path[:512]
 
 
 def parse_record(raw: bytes, config: AppConfig) -> dict:
