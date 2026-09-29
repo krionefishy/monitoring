@@ -1,4 +1,3 @@
-from app.application import Application
-from app.utils.config import Settings
+from app.v2.api import create_app
 
-app = Application(Settings()).app
+app = create_app()
