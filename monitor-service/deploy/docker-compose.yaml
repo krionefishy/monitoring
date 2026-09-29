@@ -1,16 +1,107 @@
+x-runtime: &runtime
+  build:
+    context: ../..
+    dockerfile: monitor-service/deploy/Dockerfile
+  image: monitoring-v2:local
+  restart: unless-stopped
+  environment: &environment
+    MONITOR_INSTANCE_ID: ${MONITOR_INSTANCE_ID:?Set a unique instance ID}
+    MONITOR_SECRET_KEY: ${MONITOR_SECRET_KEY:?Generate a random 48-byte secret}
+    MONITOR_DATABASE_URL: postgresql+psycopg://monitor:${POSTGRES_PASSWORD:?Set a random URL-safe password}@primary:5432/monitor
+    MONITOR_READ_DATABASE_URL: postgresql+psycopg://monitor:${POSTGRES_READ_PASSWORD:?Set a separate random URL-safe password}@read-db:5432/monitor
+    MONITOR_REDIS_URL: redis://redis:6379/0
+    MONITOR_CONFIG_PATH: /app/config.json
+    MONITOR_PUBLIC_ORIGIN: ${MONITOR_PUBLIC_ORIGIN:-}
+    MONITOR_COOKIE_SECURE: ${MONITOR_COOKIE_SECURE:-true}
+    MONITOR_PUBLISH_SECONDS: ${MONITOR_PUBLISH_SECONDS:-300}
+    MONITOR_RETENTION_DAYS: ${MONITOR_RETENTION_DAYS:-30}
+  volumes:
+    - ${MONITOR_CONFIG_FILE:-./application.direct.json}:/app/config.json:ro
+  networks: [data]
+  read_only: true
+  tmpfs: [/tmp]
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  mem_limit: 512m
+  cpus: 1
+  logging:
+    driver: json-file
+    options: {max-size: 10m, max-file: '3'}
+
 services:
-  monitor-service:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
-    ports:
-      - "8000:8000"
-    env_file:
-      - .env
+  primary:
+    image: postgres:17-bookworm
+    restart: unless-stopped
     environment:
-      MONITOR_DB_PATH: /app/data/monitor.db
+      POSTGRES_DB: monitor
+      POSTGRES_USER: monitor
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes: [primary_v2:/var/lib/postgresql/data]
+    networks: [data]
+    healthcheck: {test: [CMD-SHELL, 'pg_isready -U monitor -d monitor'], interval: 5s, timeout: 3s, retries: 20}
+    mem_limit: 768m
+    cpus: 1
+  read-db:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: monitor
+      POSTGRES_USER: monitor
+      POSTGRES_PASSWORD: ${POSTGRES_READ_PASSWORD:?Set POSTGRES_READ_PASSWORD}
+    volumes: [read_v2:/var/lib/postgresql/data]
+    networks: [data]
+    healthcheck: {test: [CMD-SHELL, 'pg_isready -U monitor -d monitor'], interval: 5s, timeout: 3s, retries: 20}
+    mem_limit: 768m
+    cpus: 1
+  redis:
+    image: redis:7-alpine
+    command: [redis-server, --maxmemory, 96mb, --maxmemory-policy, noeviction]
+    restart: unless-stopped
+    networks: [data]
+    healthcheck: {test: [CMD, redis-cli, ping], interval: 5s, timeout: 3s, retries: 20}
+    mem_limit: 128m
+    cpus: 0.5
+  init:
+    <<: *runtime
+    restart: 'no'
+    command: [python, -m, app.v2.cli, init]
+    depends_on:
+      primary: {condition: service_healthy}
+      read-db: {condition: service_healthy}
+  api:
+    <<: *runtime
+    ports: ['127.0.0.1:${MONITOR_PORT:-8088}:8000']
+    networks: [data, web]
+    depends_on:
+      init: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+  collector:
+    <<: *runtime
+    command: [python, -m, app.v2.cli, collector]
+    group_add: ['${NGINX_LOG_GID:-0}']
     volumes:
-      - sqlite_data:/app/data
+      - ${MONITOR_CONFIG_FILE:-./application.direct.json}:/app/config.json:ro
+      - ${NGINX_LOG_DIRECTORY:-/var/log/nginx}:/var/log/nginx:ro
+      - collector_v2:/app/data
+    depends_on:
+      init: {condition: service_completed_successfully}
+  worker:
+    <<: *runtime
+    command: [python, -m, app.v2.cli, worker]
+    networks: [data, web]
+    extra_hosts: ['host.docker.internal:host-gateway']
+    depends_on:
+      init: {condition: service_completed_successfully}
 
 volumes:
-  sqlite_data:
+  primary_v2:
+  read_v2:
+  collector_v2:
+networks:
+  data: {internal: true}
+  web:

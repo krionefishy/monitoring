@@ -1,0 +1,11 @@
+{
+  "application": "application",
+  "environment": "production",
+  "topology": "direct",
+  "base_path": "",
+  "log_path": "/var/log/nginx/monitoring.json",
+  "rotated_glob": "/var/log/nginx/monitoring.json.[0-9]",
+  "exclude_paths": ["/health", "/healthz"],
+  "route_rules": [{"pattern": "/home/users/[0-9]+", "route": "/home/users/{id}"}],
+  "services": [{"id": "application", "name": "Application", "prefix": "/", "health_url": "http://host.docker.internal:8080/health", "expected_status": 200}]
+}

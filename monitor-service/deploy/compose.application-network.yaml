@@ -1,0 +1,7 @@
+services:
+  worker:
+    networks: [data, web, application]
+networks:
+  application:
+    external: true
+    name: ${MONITOR_APP_NETWORK:?Set the application's Docker network name}
