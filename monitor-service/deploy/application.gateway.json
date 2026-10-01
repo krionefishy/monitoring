@@ -1,0 +1,18 @@
+{
+  "application": "application",
+  "environment": "production",
+  "topology": "gateway",
+  "base_path": "/api/v1",
+  "log_path": "/var/log/nginx/monitoring.json",
+  "rotated_glob": "/var/log/nginx/monitoring.json.[0-9]",
+  "exclude_paths": ["/api/v1/health"],
+  "route_rules": [
+    {"pattern": "/users/[0-9]+", "route": "/users/{id}"},
+    {"pattern": "/orders/[0-9]+", "route": "/orders/{id}"}
+  ],
+  "services": [
+    {"id": "gateway", "name": "API Gateway", "prefix": "/", "health_url": "http://gateway:8000/health"},
+    {"id": "users", "name": "Users", "prefix": "/users", "health_url": "http://users:8000/health"},
+    {"id": "orders", "name": "Orders", "prefix": "/orders", "health_url": "http://orders:8000/health"}
+  ]
+}
