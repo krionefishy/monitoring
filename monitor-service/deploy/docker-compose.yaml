@@ -70,6 +70,9 @@ services:
       read-db: {condition: service_healthy}
   api:
     <<: *runtime
+    environment:
+      <<: *environment
+      FORWARDED_ALLOW_IPS: ${MONITOR_TRUSTED_PROXIES:?Set the trusted nginx peer IP or CIDR}
     ports: ['127.0.0.1:${MONITOR_PORT:-8088}:8000']
     networks: [data, web]
     depends_on:

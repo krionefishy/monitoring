@@ -14,8 +14,11 @@ from .telemetry import Batch, ExcludedRecord, aggregate, parse_record
 
 
 class Collector:
-    def __init__(self, config: AppConfig, spool: Path, max_mb: int = 512):
+    def __init__(
+        self, config: AppConfig, spool: Path, max_mb: int = 512, batch_bytes=8 * 1024 * 1024
+    ):
         self.config, self.spool, self.max_bytes = config, spool, max_mb * 1024 * 1024
+        self.batch_bytes = batch_bytes
         spool.parent.mkdir(parents=True, exist_ok=True)
         self.lock = open(str(spool) + ".lock", "a")
         try:
@@ -54,21 +57,63 @@ class Collector:
         with self.db:
             self.db.execute("DELETE FROM pending WHERE id=?", (batch_id,))
 
-    def scan(self) -> dict:
-        pending_bytes = self.db.execute(
-            "SELECT coalesce(sum(length(body)),0) FROM pending"
-        ).fetchone()[0]
-        if pending_bytes >= self.max_bytes:
-            return {"state": "backpressure", "pending_bytes": pending_bytes}
+    def pending_bytes(self):
+        return self.db.execute("SELECT coalesce(sum(length(body)),0) FROM pending").fetchone()[0]
+
+    def paths(self):
         paths = [Path(p) for p in glob.glob(self.config.rotated_glob) if not p.endswith(".gz")]
         current = Path(self.config.log_path)
         if current.exists():
             paths.append(current)
-        paths = sorted(set(paths), key=lambda p: p.stat().st_mtime)
+        present = []
+        for path in set(paths):
+            try:
+                present.append((path.stat().st_mtime, path))
+            except FileNotFoundError:
+                pass  # Rotation may remove a file between glob and stat.
+        return [path for _, path in sorted(present)]
+
+    def cursor(self, handle):
+        stat = os.fstat(handle.fileno())
+        identity = f"{stat.st_dev}:{stat.st_ino}"
+        existing = self.db.execute(
+            "SELECT offset, anchor FROM cursors WHERE identity=?", (identity,)
+        ).fetchone()
+        offset, anchor = existing or (0, "")
+        if offset:
+            handle.seek(max(0, offset - 128))
+            actual = hashlib.sha256(handle.read(min(128, offset))).hexdigest()
+            if stat.st_size < offset or actual != anchor:
+                offset = 0  # Truncated/reused inode.
+        return identity, offset, stat.st_size
+
+    def backlog_bytes(self):
+        total, seen = 0, set()
+        for path in self.paths():
+            try:
+                with path.open("rb") as handle:
+                    identity, offset, size = self.cursor(handle)
+                    if identity not in seen:
+                        total += max(0, size - offset)
+                        seen.add(identity)
+            except FileNotFoundError:
+                pass
+        return total
+
+    def scan(self) -> dict:
+        pending_bytes = self.pending_bytes()
+        if pending_bytes >= self.max_bytes:
+            return {
+                "state": "backpressure",
+                "pending_bytes": pending_bytes,
+                "backlog_bytes": self.backlog_bytes(),
+                "catching_up": False,
+            }
+        paths = self.paths()
         if not paths:
             return {"state": "missing_log", "pending_bytes": pending_bytes}
         total, invalid, excluded, newest = 0, 0, 0, None
-        budget = 8 * 1024 * 1024
+        budget = self.batch_bytes
         seen = set()
         for path in paths:
             try:
@@ -76,20 +121,10 @@ class Collector:
             except FileNotFoundError:
                 continue
             with handle:
-                stat = os.fstat(handle.fileno())
-                identity = f"{stat.st_dev}:{stat.st_ino}"
+                identity, offset, _ = self.cursor(handle)
                 if identity in seen:
                     continue
                 seen.add(identity)
-                existing = self.db.execute(
-                    "SELECT offset, anchor FROM cursors WHERE identity=?", (identity,)
-                ).fetchone()
-                offset, anchor = existing or (0, "")
-                if offset:
-                    handle.seek(max(0, offset - 128))
-                    actual = hashlib.sha256(handle.read(min(128, offset))).hexdigest()
-                    if stat.st_size < offset or actual != anchor:
-                        offset = 0  # Truncated/reused inode, detected by bytes before the cursor.
                 handle.seek(offset)
                 records, bad, skipped, consumed = [], 0, 0, 0
                 while consumed < budget:
@@ -157,13 +192,16 @@ class Collector:
                 budget -= consumed
                 if budget <= 0:
                     break
+        backlog = self.backlog_bytes()
         return {
             "state": "running",
             "requests": total,
             "invalid_lines": invalid,
             "excluded_lines": excluded,
             "newest_event": newest,
-            "pending_bytes": pending_bytes,
+            "pending_bytes": self.pending_bytes(),
+            "backlog_bytes": backlog,
+            "catching_up": budget <= 0 and backlog > 0,
         }
 
     def close(self):

@@ -194,12 +194,16 @@ def test_health_transitions_and_staleness(store, monkeypatch):
     config = json.loads(store.settings.config_path.read_text())
     config["services"] = [{"id": "api", "name": "API", "health_url": "http://localhost/health"}]
     store.settings.config_path.write_text(json.dumps(config))
-    monkeypatch.setattr(service_health, "probe", lambda _: (False, None, "unavailable"))
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(
+        service_health, "probe", AsyncMock(return_value=(False, None, "unavailable"))
+    )
     service_health.check_services(store)
     assert service_status(store)[0]["state"] == "degraded"
     service_health.check_services(store)
     assert service_status(store)[0]["state"] == "down"
-    monkeypatch.setattr(service_health, "probe", lambda _: (True, 20, None))
+    monkeypatch.setattr(service_health, "probe", AsyncMock(return_value=(True, 20, None)))
     service_health.check_services(store)
     assert service_status(store)[0]["state"] == "healthy"
     with store.primary.begin() as conn:
@@ -327,3 +331,50 @@ def test_second_installation_rejects_first_installation_credentials_and_cookie(s
             with engine.connect() as conn:
                 conn.execute(text("DROP DATABASE monitoring_v2_test_b WITH (FORCE)"))
             engine.dispose()
+
+
+@pytest.mark.parametrize("trusted", [True, False])
+def test_proxy_login_rate_limit_uses_only_trusted_client_addresses(store, trusted, monkeypatch):
+    from uvicorn import Config
+
+    cache = Redis.from_url(store.settings.redis_url)
+    cache.flushdb()
+    app = create_app(store.settings)
+    monkeypatch.setenv("FORWARDED_ALLOW_IPS", "192.0.2.10")
+    server = Config(app)
+    server.load()
+    peer = "192.0.2.10" if trusted else "192.0.2.11"
+    with store.primary.begin() as conn:
+        conn.execute(
+            users.insert().values(
+                id="proxy-user",
+                username="proxy-user",
+                password_hash=passwords.hash("correct-password"),
+                role="admin",
+                enabled=True,
+            )
+        )
+    with TestClient(server.loaded_app, client=(peer, 50000)) as client:
+        for n in range(11):
+            response = client.post(
+                "/api/auth/login",
+                json={"username": f"unknown{n}", "password": "wrong"},
+                headers={"X-Forwarded-For": f"198.51.100.{n + 1}"},
+            )
+            assert response.status_code == (429 if not trusted and n == 10 else 401)
+        response = client.post(
+            "/api/auth/login",
+            json={"username": "proxy-user", "password": "correct-password"},
+            headers={"X-Forwarded-For": "198.51.100.99"},
+        )
+        assert response.status_code == (200 if trusted else 429)
+        if trusted:
+            # Correct IP attribution does not remove the per-account brute-force limit.
+            for n in range(11):
+                response = client.post(
+                    "/api/auth/login",
+                    json={"username": "same-account", "password": "wrong"},
+                    headers={"X-Forwarded-For": f"203.0.113.{n + 1}"},
+                )
+                assert response.status_code == (429 if n == 10 else 401)
+    cache.close()

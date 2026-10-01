@@ -334,6 +334,10 @@ function Diagnostics({
     );
   if (collector?.invalid_lines)
     warnings.push(`Пропущено некорректных строк: ${collector.invalid_lines}.`);
+  if (collector?.backlog_bytes && (collector.catching_up || collector.state === "backpressure"))
+    warnings.push(
+      `В nginx-логе ещё не обработано ${fmt(collector.backlog_bytes / 1048576)} МиБ. Статистика пока неполная.`,
+    );
   const stale = workers.filter(
     (w) =>
       Date.now() / 1000 - w.updated >

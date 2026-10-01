@@ -27,6 +27,8 @@ export type Worker = {
   updated: number;
   state: string;
   invalid_lines?: number;
+  backlog_bytes?: number;
+  catching_up?: boolean;
 };
 export type Metrics = {
   total: number;

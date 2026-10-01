@@ -15,6 +15,13 @@ from .storage import Store
 log = logging.getLogger(__name__)
 
 
+def collector_delay(info, elapsed, ingest_failed=False):
+    if not ingest_failed and (info.get("catching_up") or info.get("pending_bytes", 0)):
+        # Catch up in bounded batches with a pause; never monopolize the application host.
+        return max(1.0, elapsed)
+    return max(0, 30 - elapsed)
+
+
 def run(role: str):
     logging.basicConfig(level=logging.INFO)
     settings = Settings()
@@ -34,14 +41,17 @@ def run(role: str):
             while not stop.is_set():
                 started = time.monotonic()
                 info = collector.scan()
+                ingest_failed = False
                 try:
                     for batch_id, batch in collector.pending():
                         ingest(store, batch)
                         collector.acknowledge(batch_id)
+                    info["pending_bytes"] = collector.pending_bytes()
                     store.heartbeat(role, info)
                 except Exception:
+                    ingest_failed = True
                     log.exception("Ingest unavailable; retaining durable batches")
-                stop.wait(max(0, 30 - (time.monotonic() - started)))
+                stop.wait(collector_delay(info, time.monotonic() - started, ingest_failed))
         else:
             # Session-level lock prevents multiple health schedulers across processes.
             with store.primary.connect() as owner:

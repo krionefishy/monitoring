@@ -125,3 +125,45 @@ def test_missing_required_field_is_malformed_not_excluded(tmp_path):
     assert info["invalid_lines"] == 1
     assert info["excluded_lines"] == 1
     collector.close()
+
+
+def test_backlog_is_drained_in_bounded_batches_without_duplicate_counts(tmp_path):
+    from app.v2.worker import collector_delay
+
+    path = tmp_path / "access.json"
+    rotated = tmp_path / "access.json.1"
+    rotated.write_bytes(line(404) * 20)
+    path.write_bytes(line(200) * 20)
+    config = AppConfig(
+        application="test",
+        environment="test",
+        log_path=str(path),
+        rotated_glob=str(path) + ".[0-9]",
+    )
+    collector = Collector(config, tmp_path / "spool.sqlite", batch_bytes=1024)
+    try:
+        info = collector.scan()
+        assert info["backlog_bytes"] > 0
+        assert info["catching_up"]
+        assert collector_delay(info, 0.2) == 1
+        assert collector_delay(info, 0.2, ingest_failed=True) > 29
+        total = 0
+        for _ in range(30):
+            for batch_id, batch in collector.pending():
+                total += sum(row.count for row in batch.rows)
+                collector.acknowledge(batch_id)
+            if not info["backlog_bytes"]:
+                break
+            info = collector.scan()
+        assert total == 40
+        assert info["backlog_bytes"] == 0
+        assert collector.scan()["requests"] == 0
+        # An unfinished line is not a backlog to spin on.
+        with path.open("ab") as f:
+            f.write(line(409)[:20])
+        partial = collector.scan()
+        assert partial["backlog_bytes"] == 20
+        assert not partial["catching_up"]
+        assert collector_delay(partial, 0.2) > 29
+    finally:
+        collector.close()

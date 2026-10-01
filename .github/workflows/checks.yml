@@ -10,12 +10,12 @@ jobs:
         image: postgres:17-alpine
         env: {POSTGRES_DB: monitoring_v2_test, POSTGRES_USER: monitor, POSTGRES_PASSWORD: test}
         ports: ['56432:5432']
-        options: --health-cmd 'pg_isready -U monitor -d monitoring_v2_test' --health-interval 5s --health-timeout 3s --health-retries 20
+        options: --health-cmd "pg_isready -U monitor -d monitoring_v2_test" --health-interval 5s --health-timeout 3s --health-retries 20
       read:
         image: postgres:17-alpine
         env: {POSTGRES_DB: monitoring_v2_test, POSTGRES_USER: monitor, POSTGRES_PASSWORD: test}
         ports: ['56433:5432']
-        options: --health-cmd 'pg_isready -U monitor -d monitoring_v2_test' --health-interval 5s --health-timeout 3s --health-retries 20
+        options: --health-cmd "pg_isready -U monitor -d monitoring_v2_test" --health-interval 5s --health-timeout 3s --health-retries 20
       redis:
         image: redis:7-alpine
         ports: ['56479:6379']
@@ -39,3 +39,11 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+  docker-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.13'}
+      - run: python monitor-service/tests/smoke_deploy.py
