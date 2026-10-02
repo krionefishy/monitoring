@@ -99,13 +99,18 @@ def analytics(conn, start: int, end: int, step: int, service="", group="", route
     duration = (end - start) / 60
     for entry in routes.values():
         entry["rpm"] = entry["count"] / duration
-        entry["p95"] = percentile(entry.pop("histogram"), 0.95)
+        route_hist = entry.pop("histogram")
+        entry["p50"] = percentile(route_hist, 0.50)
+        entry["p75"] = percentile(route_hist, 0.75)
+        entry["p95"] = percentile(route_hist, 0.95)
+        entry["latency_overflow"] = route_hist[-1]
     return dict(
         total=total,
         errors=errors,
         server_errors=server_errors,
         rpm=total / duration,
         p50=percentile(total_hist, 0.50),
+        p75=percentile(total_hist, 0.75),
         p95=percentile(total_hist, 0.95),
         p99=percentile(total_hist, 0.99),
         latency_overflow=total_hist[-1],

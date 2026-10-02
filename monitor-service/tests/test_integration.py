@@ -378,3 +378,50 @@ def test_proxy_login_rate_limit_uses_only_trusted_client_addresses(store, truste
                 )
                 assert response.status_code == (429 if n == 10 else 401)
     cache.close()
+
+
+def test_percentiles_merge_histograms_and_follow_route_filters(store):
+    from app.v2.auth import current_user
+
+    Redis.from_url(store.settings.redis_url).flushdb()
+    config = store.settings.application()
+    timestamp = int(time.time()) // 60 * 60 - 300
+
+    def record(path, duration, number):
+        obj = json.loads(line(200 if number % 2 else 500, path, timestamp + number))
+        obj["request_time"] = str(duration) if duration is not None else "-"
+        return parse_record(json.dumps(obj).encode(), config)
+
+    # Unequal batches/time buckets and different HTTP codes must merge samples,
+    # never average already-computed percentiles.
+    durations = [0.005] * 10 + [0.05] * 5 + [0.2] * 4 + [1.0]
+    home = [record("/home/profile", value, n) for n, value in enumerate(durations)]
+    other = [record("/orders/list", 0.75, n + 90) for n in range(80)]
+    missing = [record("/missing", None, n) for n in range(4)]
+    overflow = [record("/slow", 70, 0)]
+    for records in [home[:2], home[2:] + other + missing + overflow]:
+        batch = make_batch(store).model_copy(update={"rows": aggregate(records)})
+        ingest(store, batch)
+    publish(store)
+    app = create_app(store.settings)
+    app.dependency_overrides[current_user] = lambda: {"username": "test"}
+    with TestClient(app) as client:
+        result = client.get("/api/metrics?hours=1").json()
+        assert result["total"] == 105
+        assert [result[k] for k in ("p50", "p75", "p95")] == [750, 750, 750]
+        route = next(r for r in result["routes"] if r["route"] == "/home/profile")
+        assert [route[k] for k in ("p50", "p75", "p95")] == [5, 50, 200]
+        for query in ["group=home", "route=/home/profile&method=GET&service=application"]:
+            filtered = client.get("/api/metrics?hours=1&" + query).json()
+            assert filtered["total"] == 20
+            assert [filtered[k] for k in ("p50", "p75", "p95")] == [5, 50, 200]
+            # Repeat through Redis to exercise the expanded response schema.
+            assert client.get("/api/metrics?hours=1&" + query).json()["p75"] == 50
+        for path, expected_overflow in [("/missing", 0), ("/slow", 1)]:
+            filtered = client.get("/api/metrics", params={"hours": 1, "route": path}).json()
+            for metrics_value in [filtered, filtered["routes"][0]]:
+                assert [metrics_value[k] for k in ("p50", "p75", "p95")] == [None, None, None]
+                assert metrics_value["latency_overflow"] == expected_overflow
+        empty = client.get("/api/metrics?hours=1&group=absent").json()
+        assert [empty[k] for k in ("p50", "p75", "p95")] == [None, None, None]
+        assert empty["routes"] == []

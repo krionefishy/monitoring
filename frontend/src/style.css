@@ -264,6 +264,24 @@ main {
   color: var(--muted);
   margin-top: 9px;
 }
+.latency-percentiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+.latency-percentiles dt {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 5px;
+}
+.latency-percentiles dd {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
 .panel {
   padding: 22px;
   margin-bottom: 20px;
@@ -590,6 +608,19 @@ tr:last-child td {
   }
   .metric {
     font-size: 24px;
+  }
+  .latency-percentiles {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .latency-percentiles > div {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 6px;
+  }
+  .latency-percentiles dt {
+    margin: 0;
   }
   .panel {
     padding: 16px;

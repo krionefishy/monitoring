@@ -145,6 +145,8 @@ def smoke(directory):
                 )
             time.sleep(2)
         assert metrics["codes"] == {"200": 2, "404": 1, "409": 1, "500": 1}
+        assert [metrics[key] for key in ("p50", "p75", "p95")] == [100, 100, 100]
+        assert [metrics["routes"][0][key] for key in ("p50", "p75", "p95")] == [100, 100, 100]
         assert request("/api/incidents")["total"] == 3
         print(
             "Compose smoke passed: local login, collector, exact codes, incidents, publication, health.",
