@@ -42,7 +42,8 @@ const date = (n: number | null | undefined) =>
         minute: "2-digit",
       })
     : "—";
-const ms = (n: number | null) => (n === null ? "—" : `${fmt(n)} мс`);
+const ms = (n: number | null | undefined, overflow = 0) =>
+  n == null ? (overflow ? ">60 000 мс" : "—") : `${fmt(n)} мс`;
 const labels: Record<string, string> = {
   healthy: "Healthy",
   degraded: "Degraded",
@@ -334,7 +335,10 @@ function Diagnostics({
     );
   if (collector?.invalid_lines)
     warnings.push(`Пропущено некорректных строк: ${collector.invalid_lines}.`);
-  if (collector?.backlog_bytes && (collector.catching_up || collector.state === "backpressure"))
+  if (
+    collector?.backlog_bytes &&
+    (collector.catching_up || collector.state === "backpressure")
+  )
     warnings.push(
       `В nginx-логе ещё не обработано ${fmt(collector.backlog_bytes / 1048576)} МиБ. Статистика пока неполная.`,
     );
@@ -714,17 +718,6 @@ export default function App() {
                     foot: fmt(data.errors) + " ответов · коды 400–599",
                     icon: FileWarning,
                   },
-                  {
-                    label: "Время ответа p95",
-                    value:
-                      data.p95 === null
-                        ? data.latency_overflow
-                          ? ">60 000 мс"
-                          : "—"
-                        : ms(data.p95),
-                    foot: `p50 ${ms(data.p50)} · p99 ${ms(data.p99)}`,
-                    icon: Clock3,
-                  },
                 ].map((c) => (
                   <div className="card" key={c.label}>
                     <div className="card-label">
@@ -735,6 +728,26 @@ export default function App() {
                     <div className="card-foot">{c.foot}</div>
                   </div>
                 ))}
+                <div className="card">
+                  <div className="card-label">
+                    Время ответа
+                    <Clock3 size={15} />
+                  </div>
+                  <dl className="latency-percentiles">
+                    {(["p50", "p75", "p95"] as const).map((key) => (
+                      <div
+                        key={key}
+                        title={`${key.slice(1)}% запросов завершились не дольше этого времени`}
+                      >
+                        <dt>{key}</dt>
+                        <dd>{ms(data[key], data.latency_overflow)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <div className="card-foot">
+                    p99 {ms(data.p99, data.latency_overflow)}
+                  </div>
+                </div>
               </div>
               <section className="panel">
                 <StatusChart data={data} />
@@ -758,6 +771,8 @@ export default function App() {
                         <th>Запросы</th>
                         <th>В минуту</th>
                         <th>Ошибки</th>
+                        <th>p50</th>
+                        <th>p75</th>
                         <th>p95</th>
                         <th />
                       </tr>
@@ -790,7 +805,9 @@ export default function App() {
                           >
                             {fmt(r.errors)}
                           </td>
-                          <td>{ms(r.p95)}</td>
+                          <td>{ms(r.p50, r.latency_overflow)}</td>
+                          <td>{ms(r.p75, r.latency_overflow)}</td>
+                          <td>{ms(r.p95, r.latency_overflow)}</td>
                           <td>
                             <a
                               href={`/incidents?${new URLSearchParams({ service: r.service, route: r.route, method: r.method })}`}

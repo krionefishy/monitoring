@@ -59,7 +59,7 @@ def create_app(settings: Settings | None = None):
 
     app = FastAPI(
         title="Monitoring",
-        version="2.0.0",
+        version="2.1.0",
         lifespan=lifespan,
         docs_url=None,
         redoc_url=None,
@@ -192,7 +192,7 @@ def create_app(settings: Settings | None = None):
             start = end - hours * 3600
             params = [hours, start, end, step, service, group, route, method]
             digest = hashlib.sha256(json.dumps(params).encode()).hexdigest()
-            cache_key = f"metrics:{settings.instance_id}:{snapshot['generation']}:{digest}"
+            cache_key = f"metrics:v2:{settings.instance_id}:{snapshot['generation']}:{digest}"
             try:
                 saved = cache.get(cache_key)
             except RedisError:

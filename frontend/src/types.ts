@@ -20,7 +20,10 @@ export type Route = {
   count: number;
   errors: number;
   rpm: number;
+  p50: number | null;
+  p75: number | null;
   p95: number | null;
+  latency_overflow: number;
 };
 export type Worker = {
   id: string;
@@ -35,6 +38,7 @@ export type Metrics = {
   errors: number;
   rpm: number;
   p50: number | null;
+  p75: number | null;
   p95: number | null;
   p99: number | null;
   latency_overflow: number;
